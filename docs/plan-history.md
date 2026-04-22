@@ -149,11 +149,9 @@ Without monitoring, a failed invocation (OpenAI timeout, malformed PDF, DynamoDB
 Actual invoice files were reviewed before building. Four issues were found that the plan didn't account for.
 
 ### Finding 1: Pre-taxed invoice (Delta-Distribution, R-1093-12322)
-The invoice comments section reads: *"Do not tax, tax has already been applied to items in invoice."* Without handling this, the agent would silently double-tax the invoice — a correctness bug, not a cosmetic one. Other real-world variants of the same notice also exist (e.g. *"Items are non-taxable due to 'Used' status"*).
+The invoice comments section reads: *"Do not tax, tax has already been applied to items in invoice."* Without handling this, the agent would silently double-tax the invoice — a correctness bug, not a cosmetic one.
 
-**Change:** Agent system prompt now includes an explicit pre-taxed detection rule. The agent scans the entire invoice — including comments, footers, and notes — before classifying any line items. If a pre-tax notice is found, `Invoice.pre_taxed` is set to `True`, the classification loop is skipped entirely, and all line items get `tax_rate=0`. This short-circuit also saves unnecessary GPT-4o calls.
-
-**Model change:** `Invoice` gains a `pre_taxed: bool` field. `TaxResult` gains `pre_taxed: bool` and `extraction_method: str` for auditability.
+**Change:** Agent system prompt now includes explicit tax exemption detection with two distinct types (see v6 below for the expansion of this).
 
 ### Finding 2: Quantity and price embedded in description (Delta-Distribution)
 Delta-Distribution uses only two columns (Description | Price) and embeds quantity and product ID inside the description string: `"BrightWave Laundry Pods – 42 Count – ID: 68840 - QTY: 50 $799.50"`. The original `LineItem` model assumed `quantity` and `unit_price` were always separate fields.
@@ -173,6 +171,45 @@ Several invoices (AlphaImportInvoice, 1.pdf) drop the `$` prefix on the last few
 |---|---|---|
 | `LineItem.quantity` | `int` (required) | `Optional[float]` |
 | `LineItem.unit_price` | `float` (required) | `Optional[float]` |
-| `Invoice.pre_taxed` | not present | `bool` (required) |
-| `TaxResult.pre_taxed` | not present | `bool` (required) |
+| `Invoice.pre_taxed` | not present | `bool` (required) — later replaced in v6 |
+| `TaxResult.pre_taxed` | not present | `bool` (required) — later replaced in v6 |
 | `TaxResult.extraction_method` | not present | `str` (`"pdf"` or `"vision"`) |
+
+---
+
+## v6 — Two-Type Tax Exemption Model (2026-04-22)
+
+### What prompted this
+After v5 added `pre_taxed: bool`, it was noted that invoices can be zero-tax for two fundamentally different reasons:
+1. **Pre-taxed** — the vendor already applied tax, so RetailCo must not add tax again
+2. **Used/non-taxable goods** — items are secondhand or refurbished, which are legally exempt from sales tax regardless of who handled them previously
+
+These are different business scenarios. Collapsing them into a single `pre_taxed` bool loses the reason, which matters for accounting and audit purposes.
+
+### What changed
+
+**Model:** `Invoice.pre_taxed: bool` replaced by:
+- `Invoice.tax_exempt: bool`
+- `Invoice.tax_exempt_reason: Optional[str]`
+
+Same change propagated to `TaxResult`.
+
+**Agent system prompt:** Detection rule now explicitly distinguishes the two types:
+
+| Type | `tax_exempt_reason` value | Example notice phrases |
+|---|---|---|
+| Pre-taxed | `"pre_taxed"` | "Do not tax, tax has already been applied", "Tax included" |
+| Used goods | `"used_products"` | "Items are non-taxable due to 'Used' status", "Secondhand — no tax applicable" |
+| Unknown | raw notice text | Any exemption notice that doesn't match the above patterns |
+
+**Agent behaviour:** Unchanged — if `tax_exempt=True` for any reason, classification is skipped and all line items receive `tax_rate=0`. The reason is carried through to `TaxResult` and stored in DynamoDB.
+
+### Summary of model changes (v6)
+| Field | Before (v5) | After (v6) |
+|---|---|---|
+| `Invoice.pre_taxed` | `bool` | removed |
+| `Invoice.tax_exempt` | not present | `bool` (required) |
+| `Invoice.tax_exempt_reason` | not present | `Optional[str]` |
+| `TaxResult.pre_taxed` | `bool` | removed |
+| `TaxResult.tax_exempt` | not present | `bool` (required) |
+| `TaxResult.tax_exempt_reason` | not present | `Optional[str]` |

@@ -97,10 +97,11 @@ retailco-ai-agent/
 ### 1. Models (`src/models/`)
 - `LineItem`: `description`, `quantity: Optional[float]`, `unit_price: Optional[float]`, `total_amount: float`
   - `quantity` and `unit_price` are `Optional` — some invoices (e.g. Delta-Distribution) embed them inside the description string rather than separate columns; GPT-4o parses them out where possible, leaves `None` where not present
-- `Invoice`: `invoice_id`, `vendor`, `date`, `line_items: list[LineItem]`, `pre_taxed: bool`
-  - `pre_taxed: bool` — set by the extractor when a tax-exempt notice is detected anywhere in the invoice
+- `Invoice`: `invoice_id`, `vendor`, `date`, `line_items: list[LineItem]`, `tax_exempt: bool`, `tax_exempt_reason: Optional[str]`
+  - `tax_exempt: bool` — set when any tax exemption notice is detected anywhere in the invoice (comments, headers, footers, line-level notes)
+  - `tax_exempt_reason: Optional[str]` — preserves the exact reason found: `"pre_taxed"` (tax already applied) or `"used_products"` (non-taxable secondhand/used goods), or the raw notice text if it doesn't match a known pattern
 - `LineItemTax`: `line_item`, `category`, `tax_rate`, `tax_amount`
-- `TaxResult`: `invoice_id`, `line_item_taxes`, `subtotal`, `total_tax`, `grand_total`, `pre_taxed: bool`, `extraction_method: str`
+- `TaxResult`: `invoice_id`, `line_item_taxes`, `subtotal`, `total_tax`, `grand_total`, `tax_exempt: bool`, `tax_exempt_reason: Optional[str]`, `extraction_method: str`
 
 ### 2. Extractors (`src/extractors/`)
 - `BaseExtractor`: abstract `extract(pdf_bytes) -> Invoice`
@@ -138,14 +139,28 @@ tools = [
 **Agent system prompt includes these explicit rules:**
 
 ```
-Pre-taxed invoice detection — check the ENTIRE invoice (comments, notes, headers,
-footers) for any language indicating tax has already been applied or items are
-non-taxable. Examples include but are not limited to:
-  - "Do not tax, tax has already been applied to items in invoice"
-  - "Items are non-taxable due to 'Used' status"
-  - "Tax exempt", "Tax included", "All prices include applicable taxes"
-If ANY such notice is found, set pre_taxed=true on the Invoice. All line items
-will receive tax_rate=0 and tax_amount=0. Do not classify or calculate tax.
+Tax exemption detection — scan the ENTIRE invoice (comments, notes, headers,
+footers, line-level annotations) for any language indicating items should not
+be taxed. There are two distinct exemption types to recognise:
+
+  1. PRE-TAXED — tax was already applied by the vendor before invoicing:
+     - "Do not tax, tax has already been applied to items in invoice"
+     - "Tax included", "All prices include applicable taxes"
+     - "VAT included", "Tax already calculated"
+     → set tax_exempt=true, tax_exempt_reason="pre_taxed"
+
+  2. USED / NON-TAXABLE GOODS — items are exempt because they are secondhand
+     or used products, which are not subject to sales tax:
+     - "Items are non-taxable due to 'Used' status"
+     - "Used goods — tax exempt"
+     - "Secondhand / refurbished — no tax applicable"
+     → set tax_exempt=true, tax_exempt_reason="used_products"
+
+  If a notice is found but does not clearly match either type, set
+  tax_exempt=true and tax_exempt_reason=<exact text of the notice>.
+
+  If tax_exempt=true for ANY reason, set tax_rate=0 and tax_amount=0 for ALL
+  line items. Do not call classify_line_item. Record the reason in the result.
 
 Embedded field parsing — some invoices do not use separate quantity/price columns.
 Parse quantity, unit_price, and total_amount from the description string when
@@ -158,8 +173,8 @@ parsing monetary values as floats. Do not assume a $ prefix is always present.
 
 **Agent loop (`invoice_agent.py`):**
 1. Receive PDF bytes
-2. Call `extract_invoice_data` tool — returns `Invoice` with `pre_taxed` flag set
-3. If `pre_taxed=True`: skip to step 6 with all tax values as 0
+2. Call `extract_invoice_data` tool — returns `Invoice` with `tax_exempt` and `tax_exempt_reason` set
+3. If `tax_exempt=True`: skip to step 6 with all tax values as 0, carry reason through to result
 4. For each line item, call `classify_line_item`
 5. Call `calculate_line_tax` for each
 6. Call `save_result` with final `TaxResult`
@@ -217,8 +232,8 @@ boto3>=1.34.0
 - **Binary media type**: API Gateway configured with `multipart/form-data` as binary media type so PDF bytes pass through correctly
 - **Two-stage extraction**: PyMuPDF first (fast, free) → Vision fallback when text is sparse (< 50 chars); confirmed necessary by scanned invoices in sample set
 - **GPT-4o parses structure, not code**: no column-index assumptions; handles varying layouts, embedded QTY/ID fields, and missing `$` signs across all vendors
-- **Pre-taxed detection in system prompt**: agent reads entire invoice including comments/footers before classifying — catches notices like "Do not tax" and "non-taxable due to Used status"; sets all tax to 0 and short-circuits classification
-- **`quantity` and `unit_price` are Optional**: not all vendors provide them as separate fields; total_amount is always required
+- **Two-type tax exemption detection in system prompt**: agent reads entire invoice including comments/footers before classifying — distinguishes between `pre_taxed` (tax already applied by vendor) and `used_products` (secondhand goods, not subject to sales tax); both set all line item tax to 0 and short-circuit classification. Unknown notices preserved verbatim in `tax_exempt_reason`
+- **`quantity` and `unit_price` are Optional**: not all vendors provide them as separate fields; `total_amount` is always required
 - **Tax CSV loaded once** at Lambda cold start, not per invocation
 - **OpenAI tool use** makes it genuinely agentic — the LLM decides which tools to call and in what order
 - **DynamoDB for retrieval**: `GET /invoices/{id}` hits DynamoDB directly; S3 stores raw PDFs only
