@@ -80,12 +80,38 @@ retailco-ai-agent/
 ├── lambda_handler.py           # AWS Lambda entry point
 ├── infrastructure/
 │   └── template.yaml           # CloudFormation (S3, Lambda, DynamoDB, SSM, API Gateway, IAM)
+├── frontend/
+│   ├── app/
+│   │   ├── layout.tsx          # Root layout + metadata
+│   │   ├── page.tsx            # State machine: upload → processing → results/error
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── Header.tsx          # Nav + invoice ID lookup
+│   │   ├── UploadPanel.tsx     # Drag-drop + file card + process button
+│   │   ├── ProcessingPanel.tsx # Spinner + rotating step labels
+│   │   ├── ErrorPanel.tsx      # Error card + retry
+│   │   └── results/
+│   │       ├── ResultsPanel.tsx    # Top bar, badges, composes sub-components
+│   │       ├── MetadataCards.tsx   # 8-cell metadata grid
+│   │       ├── LineItemsTable.tsx  # Line items with category pills
+│   │       └── TotalsCard.tsx      # Subtotal / tax / grand total
+│   ├── lib/
+│   │   ├── types.ts            # TaxResult, LineItemTax, Address interfaces
+│   │   ├── api.ts              # processInvoice(), lookupInvoice()
+│   │   └── format.ts           # fmt(), fmtAddress(), TAX_EXEMPT_LABELS
+│   ├── next.config.js
+│   ├── tailwind.config.ts
+│   └── package.json
 ├── docs/
 │   ├── plan.md                 # This file — current implementation plan
-│   └── plan-history.md         # Full record of planning decisions and changes
+│   ├── plan-history.md         # Chronological record of all planning changes
+│   └── design-decisions.md     # All technical and product design decisions
+├── scripts/
+│   └── test_local.py           # Local pipeline test without AWS
 ├── tax_rate_by_category.csv
 ├── Invoices/                   # Sample invoices
 ├── requirements.txt
+├── requirements-dev.txt
 ├── .env
 └── .gitignore
 ```
@@ -216,11 +242,26 @@ Resources:
 
 No `OpenAIApiKey` CloudFormation parameter — key lives in SSM, never touches CloudFormation.
 
-### 9. Requirements (`requirements.txt`)
+### 9. Frontend (`frontend/`)
+- **Framework:** Next.js 14, TypeScript, Tailwind CSS
+- **Run:** `cd frontend && npm install && npm run dev` → `http://localhost:3000`
+- **API URL:** set `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
+- Views: Upload → Processing → Results (or Error)
+- Results display: metadata cards, line items table with category pills, totals card
+- Badges: extraction method (`PDF` / `Vision (scanned)`), tax exempt reason
+
+### 10. Requirements
 ```
+# requirements.txt (deployed to Lambda)
 openai>=1.0.0
 pymupdf>=1.23.0
 boto3>=1.34.0
+
+# requirements-dev.txt (local only)
+pytest>=8.0.0
+moto[s3,dynamodb,ssm]>=5.0.0
+python-dotenv>=1.0.0
+pytest-cov>=5.0.0
 ```
 
 ---

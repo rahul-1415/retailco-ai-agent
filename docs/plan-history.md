@@ -213,3 +213,55 @@ Same change propagated to `TaxResult`.
 | `TaxResult.pre_taxed` | `bool` | removed |
 | `TaxResult.tax_exempt` | not present | `bool` (required) |
 | `TaxResult.tax_exempt_reason` | not present | `Optional[str]` |
+
+---
+
+## v7 — Optional Invoice Metadata Fields (2026-04-22)
+
+### What prompted this
+During the build phase, the decision was made to capture richer invoice context beyond the minimum required for tax calculation — vendor address, bill-to details, customer ID, and due date are present in every sample invoice and useful for AP team auditing.
+
+### What changed
+- `Address` dataclass added: `street`, `city`, `state`, `zip_code`, `phone` — all optional
+- `Invoice` gains: `vendor_address`, `bill_to_name`, `bill_to_address`, `customer_id`, `due_date`
+- `TaxResult` mirrors all new fields and serialises them in `to_dict()`
+- Extraction prompt updated to request all new fields; GPT-4o returns `null` for any not present
+- Both `PDFExtractor` and `VisionExtractor` get `_to_address()` helper
+- `TaxCalculator` passes all metadata straight through to `TaxResult`
+
+---
+
+## v8 — CSV Encoding Fix: Home Décor → Home Decor (2026-04-22)
+
+### What prompted this
+Running `scripts/test_local.py` against a real invoice raised `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9`. The CSV file `tax_rate_by_category.csv` contained `Home Décor` (row 30) with a Latin-1 encoded `é` character, incompatible with the UTF-8 `open()` call in `TaxClassifier`.
+
+### Options considered
+1. Change `open()` encoding to `latin-1` — works but masks future encoding issues
+2. Fix the CSV to use plain ASCII — correct at the source, no code change needed
+
+**Decision:** Fix the CSV. Changed `Home D\xe9cor` → `Home Decor`. The category name is unchanged in meaning; the accent was cosmetic. Code stays clean.
+
+---
+
+## v9 — Next.js Frontend (2026-04-22)
+
+### What prompted this
+Initial frontend was a single `frontend/index.html` using Tailwind CDN + vanilla JS. Replaced with a proper Next.js 14 app for modularity, TypeScript safety, and easier maintainability.
+
+### What changed
+- Framework: Next.js 14 + TypeScript + Tailwind CSS (via PostCSS)
+- App Router with a single client page (`app/page.tsx`) managing view state
+- Components split by responsibility:
+  - `Header` — nav + lookup input
+  - `UploadPanel` — drag-drop zone, file card, process button
+  - `ProcessingPanel` — spinner + rotating step labels
+  - `ErrorPanel` — error card + retry
+  - `results/ResultsPanel` — top bar, badges, composes sub-components
+  - `results/MetadataCards` — 8-cell metadata grid
+  - `results/LineItemsTable` — line items table with category pills
+  - `results/TotalsCard` — subtotal / tax / grand total
+- `lib/types.ts` — TypeScript interfaces matching Python models exactly
+- `lib/api.ts` — `processInvoice()` and `lookupInvoice()` fetch wrappers
+- `lib/format.ts` — shared `fmt()`, `fmtAddress()`, `TAX_EXEMPT_LABELS`
+- API base URL via `NEXT_PUBLIC_API_BASE_URL` env var; defaults to SAM local port
