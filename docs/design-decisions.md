@@ -34,6 +34,18 @@ A record of every significant technical and product decision made during the des
 **Decision:** CloudWatch Logs Metric Filter on `ERROR` pattern → CloudWatch Alarm → SNS.
 **Why:** All free tier. Metric filters work on existing CloudWatch Logs with zero code change. Lambda Destinations would require async invocation and add complexity.
 
+### Lambda packaged as S3 zip, not CloudFormation ZipFile
+**Decision:** `Code: S3Bucket/S3Key` referencing a pre-uploaded `lambda.zip`, not `Code: ZipFile`.
+**Why:** `ZipFile` only supports inline code with no imports — it cannot bundle `src/`, PyMuPDF, or OpenAI SDK. A zip uploaded to S3 is the standard pattern for any Lambda with dependencies. `scripts/deploy.sh` automates the build, upload, and deploy in one command.
+
+### Dedicated S3 packaging bucket with public access blocked
+**Decision:** A separate `retailco-cfn-<account-id>` bucket holds `lambda.zip`. All public access is blocked on creation.
+**Why:** Keeping deployment artifacts out of the invoices bucket makes IAM policies and lifecycle rules cleaner. Public access block is a mandatory baseline — there is no reason for a packaging bucket to be public, and misconfigured bucket policies have caused significant real-world data breaches.
+
+### `deploy.sh` over SAM CLI or CDK
+**Decision:** A plain bash script using `aws cloudformation deploy` directly.
+**Why:** SAM and CDK add toolchain dependencies (Docker for SAM local, Node for CDK) that aren't needed here. The project is a single Lambda with a known structure — a 60-line bash script is fully transparent, requires only the AWS CLI, and is easier to audit and modify than a framework abstraction.
+
 ---
 
 ## Extraction & AI

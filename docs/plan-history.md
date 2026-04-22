@@ -290,3 +290,27 @@ After processing an invoice the user had to remember the invoice ID to look it u
 - `lib/api.ts`: `listInvoices()` fetch wrapper
 - `components/HistoryPanel.tsx`: new component — renders a list of invoice rows with vendor, ID, date, grand total, and tax exempt badge; each row is clickable and loads the full result
 - `app/page.tsx`: fetches history on mount and after each successful process; renders `HistoryPanel` below `UploadPanel` on the upload view; hidden when list is empty
+
+---
+
+## v11 — AWS Deployment Script + Lambda Packaging (2026-04-22)
+
+### What prompted this
+The `infrastructure/template.yaml` had a `ZipFile` placeholder that only holds inline code — it cannot import dependencies or the `src/` package. A real deployment needs the Lambda packaged as a zip with all dependencies bundled. Previously the plan's Verification section listed a manual multi-step deploy; this automates it.
+
+### What changed
+
+**`infrastructure/template.yaml`:**
+- `Code.ZipFile` placeholder replaced with `Code: S3Bucket/S3Key` — references a zip uploaded to S3 before deployment
+- New `DeploymentBucket` parameter — the name of the S3 bucket that holds `lambda.zip`; passed at deploy time, never hardcoded
+
+**`scripts/deploy.sh` (new):**
+A single script that handles the full build and deploy cycle:
+1. Creates packaging bucket `retailco-cfn-<account-id>` if it doesn't exist; blocks all public access
+2. Installs `requirements.txt` into `.build/` directory
+3. Copies `lambda_handler.py`, `src/`, `tax_rate_by_category.csv` into `.build/`
+4. Zips `.build/` → `lambda.zip`, uploads to S3, cleans up
+5. Runs `aws cloudformation deploy` with `CAPABILITY_NAMED_IAM` and `--no-fail-on-empty-changeset`
+6. Prints stack outputs table (ApiUrl, bucket, table, SNS ARN)
+
+**`.gitignore`:** Added `.build/` and `lambda.zip` to prevent build artifacts from being committed.

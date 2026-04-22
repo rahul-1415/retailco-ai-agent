@@ -109,6 +109,8 @@ retailco-ai-agent/
 │   ├── plan-history.md         # Chronological record of all planning changes
 │   └── design-decisions.md     # All technical and product design decisions
 ├── scripts/
+│   ├── deploy.sh               # Build Lambda zip, upload to S3, deploy CloudFormation
+│   ├── local_server.py         # Local HTTP server (no AWS) for frontend dev
 │   └── test_local.py           # Local pipeline test without AWS
 ├── tax_rate_by_category.csv
 ├── Invoices/                   # Sample invoices
@@ -245,6 +247,9 @@ Resources:
 
 No `OpenAIApiKey` CloudFormation parameter — key lives in SSM, never touches CloudFormation.
 
+**Deployment parameter:**
+- `DeploymentBucket` — name of the S3 bucket where `lambda.zip` is uploaded before deploying; passed via `--parameter-overrides` in `deploy.sh`
+
 ### 9. Frontend (`frontend/`)
 - **Framework:** Next.js 14, TypeScript, Tailwind CSS
 - **Run:** `cd frontend && npm install && npm run dev` → `http://localhost:3000`
@@ -255,7 +260,37 @@ No `OpenAIApiKey` CloudFormation parameter — key lives in SSM, never touches C
 - Badges: extraction method (`PDF` / `Vision (scanned)`), tax exempt reason
 - `HistoryPanel`: clickable rows showing vendor, invoice ID, date, grand total, and exempt badge; clicking loads full result via `GET /invoices/{id}`
 
-### 10. Requirements
+### 10. Deployment (`scripts/deploy.sh`)
+One-time setup:
+```bash
+aws configure   # set Access Key ID, Secret, region, output format
+aws ssm put-parameter --name /retailco/openai-api-key --value sk-... --type SecureString
+```
+
+Every deploy (initial + updates):
+```bash
+./scripts/deploy.sh
+```
+
+The script:
+1. Creates (or verifies) the S3 packaging bucket `retailco-cfn-<account-id>` with all public access blocked
+2. `pip install -r requirements.txt -t .build/` — installs Lambda dependencies
+3. Copies `lambda_handler.py`, `src/`, `tax_rate_by_category.csv` into `.build/`
+4. Zips `.build/` → `lambda.zip` and uploads to the packaging bucket
+5. Runs `aws cloudformation deploy` — creates the stack on first run, produces a changeset on updates
+6. Prints stack outputs (ApiUrl, bucket name, table name, SNS alarm topic ARN)
+
+After deploy — wire the frontend:
+```bash
+echo "NEXT_PUBLIC_API_BASE_URL=<ApiUrl from output>" > frontend/.env.local
+```
+
+Post-deploy — subscribe to error alerts:
+```bash
+aws sns subscribe --topic-arn <AlarmTopicArn> --protocol email --notification-endpoint your@email.com
+```
+
+### 11. Requirements
 ```
 # requirements.txt (deployed to Lambda)
 openai>=1.0.0
@@ -288,9 +323,13 @@ pytest-cov>=5.0.0
 
 ## Verification
 1. Store API key: `aws ssm put-parameter --name /retailco/openai-api-key --value <key> --type SecureString`
-2. Deploy stack: `aws cloudformation deploy --template-file infrastructure/template.yaml --stack-name retailco-agent --capabilities CAPABILITY_IAM`
-3. Get API URL from stack outputs
-4. Upload an invoice: `curl -X POST <api-url>/invoices -F "file=@Invoices/RetailCo_Invoice.pdf"`
-5. Verify response contains line-item tax breakdown
+2. Deploy: `./scripts/deploy.sh`
+3. Copy `ApiUrl` from printed outputs
+4. Set frontend env: `echo "NEXT_PUBLIC_API_BASE_URL=<ApiUrl>" > frontend/.env.local`
+5. Upload an invoice: `curl -X POST <api-url>/invoices -F "file=@Invoices/RetailCo_Invoice.pdf"`
+6. Verify response contains line-item tax breakdown
+7. Fetch stored result: `curl <api-url>/invoices/<invoice_id>`
+8. List all results: `curl <api-url>/invoices`
+9. Check Lambda logs in CloudWatch for agent tool call trace
 6. Fetch stored result: `curl <api-url>/invoices/<invoice_id>`
 7. Check Lambda logs in CloudWatch for agent tool call trace
