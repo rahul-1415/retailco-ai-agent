@@ -95,21 +95,29 @@ retailco-ai-agent/
 ## Implementation Steps
 
 ### 1. Models (`src/models/`)
-- `LineItem`: `description`, `quantity`, `unit_price`, `total_amount`
-- `Invoice`: `invoice_id`, `vendor`, `date`, `line_items: list[LineItem]`
+- `LineItem`: `description`, `quantity: Optional[float]`, `unit_price: Optional[float]`, `total_amount: float`
+  - `quantity` and `unit_price` are `Optional` — some invoices (e.g. Delta-Distribution) embed them inside the description string rather than separate columns; GPT-4o parses them out where possible, leaves `None` where not present
+- `Invoice`: `invoice_id`, `vendor`, `date`, `line_items: list[LineItem]`, `pre_taxed: bool`
+  - `pre_taxed: bool` — set by the extractor when a tax-exempt notice is detected anywhere in the invoice
 - `LineItemTax`: `line_item`, `category`, `tax_rate`, `tax_amount`
-- `TaxResult`: `invoice_id`, `line_item_taxes`, `subtotal`, `total_tax`, `grand_total`
+- `TaxResult`: `invoice_id`, `line_item_taxes`, `subtotal`, `total_tax`, `grand_total`, `pre_taxed: bool`, `extraction_method: str`
 
 ### 2. Extractors (`src/extractors/`)
 - `BaseExtractor`: abstract `extract(pdf_bytes) -> Invoice`
-- `PDFExtractor`: uses **PyMuPDF** (`fitz`) to extract text from native PDFs, parses into `Invoice`
+- `PDFExtractor`: uses **PyMuPDF** (`fitz`) to extract text from native PDFs, passes raw text to GPT-4o for structured parsing into `Invoice`
 - `VisionExtractor`: sends PDF page as base64 image to OpenAI GPT-4o vision; structured JSON response parsed into `Invoice`
-- Auto-detection: try `PDFExtractor` first (fast, free); fall back to `VisionExtractor` if text is sparse/empty
+- Auto-detection: try `PDFExtractor` first (fast, free); fall back to `VisionExtractor` if extracted text is sparse (< 50 meaningful characters)
+
+**GPT-4o extraction prompt handles all structural variations:**
+- Varying column orders (Qty | Price | Desc vs Desc | Qty | Price)
+- Quantity/ID/price embedded in description strings (e.g. `"BrightWave Laundry Pods – ID: 68840 - QTY: 50 $799.50"`) — GPT-4o reads the full line and fills `quantity`, `unit_price`, `total_amount` intelligently; if quantity/unit_price cannot be determined, returns `null` for those fields
+- Missing or inconsistent `$` signs in amount fields — parsed as float after context-aware cleaning
 
 ### 3. Classifier (`src/classifier/tax_classifier.py`)
 - Loads `tax_rate_by_category.csv` into memory on cold start
 - Exposed as an **OpenAI tool**: `classify_line_item(description: str) -> {category, tax_rate}`
 - Uses GPT-4o to semantically match description to the closest of the 50 categories
+- If `Invoice.pre_taxed` is `True`, classifier skips GPT-4o call entirely and returns `{category: "Pre-Taxed", tax_rate: 0}` for every line item
 
 ### 4. Calculator (`src/calculator/tax_calculator.py`)
 - Pure function: `calculate_tax(amount: float, tax_rate: float) -> float`
@@ -127,13 +135,35 @@ tools = [
 ]
 ```
 
+**Agent system prompt includes these explicit rules:**
+
+```
+Pre-taxed invoice detection — check the ENTIRE invoice (comments, notes, headers,
+footers) for any language indicating tax has already been applied or items are
+non-taxable. Examples include but are not limited to:
+  - "Do not tax, tax has already been applied to items in invoice"
+  - "Items are non-taxable due to 'Used' status"
+  - "Tax exempt", "Tax included", "All prices include applicable taxes"
+If ANY such notice is found, set pre_taxed=true on the Invoice. All line items
+will receive tax_rate=0 and tax_amount=0. Do not classify or calculate tax.
+
+Embedded field parsing — some invoices do not use separate quantity/price columns.
+Parse quantity, unit_price, and total_amount from the description string when
+column-based values are absent. Return null for fields that genuinely cannot be
+determined from any part of the invoice text.
+
+Amount formatting — strip non-numeric characters ($, commas, spaces) before
+parsing monetary values as floats. Do not assume a $ prefix is always present.
+```
+
 **Agent loop (`invoice_agent.py`):**
 1. Receive PDF bytes
-2. Call `extract_invoice_data` tool
-3. For each line item, call `classify_line_item`
-4. Call `calculate_line_tax` for each
-5. Call `save_result` with final `TaxResult`
-6. Return `TaxResult` to caller
+2. Call `extract_invoice_data` tool — returns `Invoice` with `pre_taxed` flag set
+3. If `pre_taxed=True`: skip to step 6 with all tax values as 0
+4. For each line item, call `classify_line_item`
+5. Call `calculate_line_tax` for each
+6. Call `save_result` with final `TaxResult`
+7. Return `TaxResult` to caller
 
 ### 6. Lambda Handler (`lambda_handler.py`)
 - Entry: `handler(event, context)`
@@ -185,7 +215,10 @@ boto3>=1.34.0
 - **CloudWatch Alarm**: Metric filter on Lambda log group emits an `InvoiceProcessingErrors` metric on any `ERROR` log line; alarm fires at ≥1 error in 5 minutes — all within free tier (10 custom metrics + 10 alarms free)
 - **API Gateway Lambda Proxy**: Lambda handles both routes in one function — routes by `event['httpMethod']` and `event['resource']`
 - **Binary media type**: API Gateway configured with `multipart/form-data` as binary media type so PDF bytes pass through correctly
-- **Two-stage extraction**: PyMuPDF first (fast, free) → Vision fallback (handles scanned invoices)
+- **Two-stage extraction**: PyMuPDF first (fast, free) → Vision fallback when text is sparse (< 50 chars); confirmed necessary by scanned invoices in sample set
+- **GPT-4o parses structure, not code**: no column-index assumptions; handles varying layouts, embedded QTY/ID fields, and missing `$` signs across all vendors
+- **Pre-taxed detection in system prompt**: agent reads entire invoice including comments/footers before classifying — catches notices like "Do not tax" and "non-taxable due to Used status"; sets all tax to 0 and short-circuits classification
+- **`quantity` and `unit_price` are Optional**: not all vendors provide them as separate fields; total_amount is always required
 - **Tax CSV loaded once** at Lambda cold start, not per invocation
 - **OpenAI tool use** makes it genuinely agentic — the LLM decides which tools to call and in what order
 - **DynamoDB for retrieval**: `GET /invoices/{id}` hits DynamoDB directly; S3 stores raw PDFs only
