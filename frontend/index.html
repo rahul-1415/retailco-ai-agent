@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RetailCo Tax Agent</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            brand: { DEFAULT: '#16a34a', light: '#f0fdf4', dark: '#15803d' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .drop-active { border-color: #16a34a !important; background: #f0fdf4; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- ── Nav ── -->
+  <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <svg class="w-6 h-6 text-brand" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z"/>
+        </svg>
+        <span class="font-semibold text-gray-900 text-sm tracking-tight">RetailCo Tax Agent</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <input id="lookup-input" type="text" placeholder="Look up invoice ID…"
+          class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent placeholder-gray-400" />
+        <button onclick="lookupInvoice()"
+          class="text-sm font-medium text-gray-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors">
+          Look up
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ── -->
+  <main class="max-w-6xl mx-auto px-6 py-10">
+
+    <!-- Upload panel -->
+    <div id="panel-upload">
+      <div class="mb-8 text-center">
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Invoice Tax Calculator</h1>
+        <p class="mt-1.5 text-sm text-gray-500">Upload a vendor invoice — the agent extracts line items, assigns tax categories, and calculates tax payable.</p>
+      </div>
+
+      <div id="drop-zone"
+        class="border-2 border-dashed border-gray-200 rounded-2xl bg-white transition-colors cursor-pointer flex flex-col items-center justify-center gap-4 py-20 px-8"
+        onclick="document.getElementById('file-input').click()"
+        ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+        <div class="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center">
+          <svg class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+          </svg>
+        </div>
+        <div class="text-center">
+          <p id="drop-label" class="text-sm font-medium text-gray-700">Drop a PDF here, or <span class="text-brand underline underline-offset-2">browse</span></p>
+          <p class="mt-1 text-xs text-gray-400">Supports native and scanned PDFs</p>
+        </div>
+        <input id="file-input" type="file" accept="application/pdf" class="hidden" onchange="onFileSelected(event)" />
+      </div>
+
+      <div id="file-selected" class="hidden mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center flex-shrink-0">
+            <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
+            </svg>
+          </div>
+          <div>
+            <p id="file-name" class="text-sm font-medium text-gray-800">filename.pdf</p>
+            <p id="file-size" class="text-xs text-gray-400">0 KB</p>
+          </div>
+        </div>
+        <button onclick="clearFile()" class="text-gray-400 hover:text-gray-600 transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mt-5 flex justify-center">
+        <button id="btn-process" onclick="processInvoice()" disabled
+          class="flex items-center gap-2 bg-brand text-white text-sm font-semibold px-6 py-2.5 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:bg-brand-dark transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/>
+          </svg>
+          Process Invoice
+        </button>
+      </div>
+    </div>
+
+    <!-- Processing panel -->
+    <div id="panel-processing" class="hidden flex flex-col items-center justify-center py-32 gap-5">
+      <div class="w-12 h-12 rounded-full border-4 border-gray-100 border-t-brand spinner"></div>
+      <div class="text-center">
+        <p class="text-sm font-semibold text-gray-800">Processing invoice…</p>
+        <p id="processing-step" class="mt-1 text-xs text-gray-400">Extracting line items</p>
+      </div>
+    </div>
+
+    <!-- Error panel -->
+    <div id="panel-error" class="hidden">
+      <div class="bg-red-50 border border-red-100 rounded-2xl px-6 py-5 flex items-start gap-4">
+        <svg class="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/>
+        </svg>
+        <div>
+          <p class="text-sm font-semibold text-red-800">Processing failed</p>
+          <p id="error-message" class="mt-0.5 text-xs text-red-600"></p>
+        </div>
+      </div>
+      <div class="mt-5 flex justify-center">
+        <button onclick="reset()" class="text-sm font-medium text-gray-600 border border-gray-200 bg-white rounded-xl px-5 py-2.5 hover:bg-gray-50 transition-colors">
+          Try again
+        </button>
+      </div>
+    </div>
+
+    <!-- Results panel -->
+    <div id="panel-results" class="hidden">
+
+      <!-- Top bar -->
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <button onclick="reset()" class="text-gray-400 hover:text-gray-700 transition-colors">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+            </svg>
+          </button>
+          <h2 class="text-lg font-bold text-gray-900">Invoice Results</h2>
+          <span id="badge-exempt" class="hidden items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-xs font-medium px-2.5 py-0.5 rounded-full">
+            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+            <span id="badge-exempt-text"></span>
+          </span>
+          <span id="badge-method" class="hidden bg-blue-50 text-blue-700 border border-blue-100 text-xs font-medium px-2.5 py-0.5 rounded-full"></span>
+        </div>
+        <button onclick="reset()"
+          class="flex items-center gap-1.5 text-sm font-medium text-brand border border-brand rounded-lg px-4 py-1.5 hover:bg-brand-light transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+          </svg>
+          New Invoice
+        </button>
+      </div>
+
+      <!-- Metadata row -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Vendor</p>
+          <p id="meta-vendor" class="mt-1 text-sm font-semibold text-gray-900 truncate">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Invoice #</p>
+          <p id="meta-invoice-id" class="mt-1 text-sm font-semibold text-gray-900 truncate">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Date</p>
+          <p id="meta-date" class="mt-1 text-sm font-semibold text-gray-900">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Due Date</p>
+          <p id="meta-due-date" class="mt-1 text-sm font-semibold text-gray-900">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Bill To</p>
+          <p id="meta-bill-to" class="mt-1 text-sm font-semibold text-gray-900 truncate">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Customer ID</p>
+          <p id="meta-customer-id" class="mt-1 text-sm font-semibold text-gray-900">—</p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-xl px-4 py-3 col-span-2">
+          <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Vendor Address</p>
+          <p id="meta-vendor-address" class="mt-1 text-sm font-semibold text-gray-900 truncate">—</p>
+        </div>
+      </div>
+
+      <!-- Line items table -->
+      <div class="bg-white border border-gray-200 rounded-2xl overflow-hidden mb-5">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-100 bg-gray-50">
+              <th class="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3">Description</th>
+              <th class="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap">Qty</th>
+              <th class="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap">Unit Price</th>
+              <th class="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap">Amount</th>
+              <th class="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Category</th>
+              <th class="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap">Tax Rate</th>
+              <th class="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-5 py-3 whitespace-nowrap">Tax</th>
+            </tr>
+          </thead>
+          <tbody id="line-items-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Totals -->
+      <div class="flex justify-end">
+        <div class="bg-white border border-gray-200 rounded-2xl px-6 py-5 w-72 space-y-3">
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-500">Subtotal</span>
+            <span id="total-subtotal" class="font-medium text-gray-900">$0.00</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-500">Total Tax</span>
+            <span id="total-tax" class="font-medium text-gray-900">$0.00</span>
+          </div>
+          <div class="border-t border-gray-100 pt-3 flex justify-between">
+            <span class="text-sm font-semibold text-gray-900">Grand Total</span>
+            <span id="total-grand" class="text-sm font-bold text-gray-900">$0.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // ── Config ──────────────────────────────────────────────────────────────
+    // Set this to your deployed API Gateway URL after deploying.
+    // For local SAM testing: http://127.0.0.1:3000
+    const API_BASE = window.API_BASE || 'https://your-api-id.execute-api.us-east-1.amazonaws.com/prod';
+
+    // ── State ────────────────────────────────────────────────────────────────
+    let selectedFile = null;
+
+    // ── Panels ───────────────────────────────────────────────────────────────
+    function showPanel(name) {
+      ['upload','processing','error','results'].forEach(p =>
+        document.getElementById(`panel-${p}`).classList.add('hidden')
+      );
+      document.getElementById(`panel-${name}`).classList.remove('hidden');
+    }
+
+    // ── Drag & drop ──────────────────────────────────────────────────────────
+    function onDragOver(e) {
+      e.preventDefault();
+      document.getElementById('drop-zone').classList.add('drop-active');
+    }
+    function onDragLeave() {
+      document.getElementById('drop-zone').classList.remove('drop-active');
+    }
+    function onDrop(e) {
+      e.preventDefault();
+      document.getElementById('drop-zone').classList.remove('drop-active');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === 'application/pdf') setFile(file);
+    }
+    function onFileSelected(e) {
+      setFile(e.target.files[0]);
+    }
+
+    function setFile(file) {
+      selectedFile = file;
+      document.getElementById('file-name').textContent = file.name;
+      document.getElementById('file-size').textContent = `${(file.size / 1024).toFixed(1)} KB`;
+      document.getElementById('drop-label').textContent = 'PDF selected';
+      document.getElementById('file-selected').classList.remove('hidden');
+      document.getElementById('btn-process').disabled = false;
+    }
+
+    function clearFile() {
+      selectedFile = null;
+      document.getElementById('file-input').value = '';
+      document.getElementById('file-selected').classList.add('hidden');
+      document.getElementById('drop-label').innerHTML = 'Drop a PDF here, or <span class="text-brand underline underline-offset-2">browse</span>';
+      document.getElementById('btn-process').disabled = true;
+    }
+
+    // ── Process ──────────────────────────────────────────────────────────────
+    async function processInvoice() {
+      if (!selectedFile) return;
+      showPanel('processing');
+
+      const steps = ['Extracting line items…', 'Classifying categories…', 'Calculating tax…'];
+      let i = 0;
+      const stepEl = document.getElementById('processing-step');
+      const stepTimer = setInterval(() => {
+        stepEl.textContent = steps[i % steps.length];
+        i++;
+      }, 2000);
+
+      try {
+        const form = new FormData();
+        form.append('file', selectedFile);
+        const res = await fetch(`${API_BASE}/invoices`, { method: 'POST', body: form });
+        clearInterval(stepTimer);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderResults(data);
+        showPanel('results');
+      } catch (err) {
+        clearInterval(stepTimer);
+        document.getElementById('error-message').textContent = err.message;
+        showPanel('error');
+      }
+    }
+
+    // ── Lookup ───────────────────────────────────────────────────────────────
+    async function lookupInvoice() {
+      const id = document.getElementById('lookup-input').value.trim();
+      if (!id) return;
+      showPanel('processing');
+      document.getElementById('processing-step').textContent = 'Fetching invoice…';
+      try {
+        const res = await fetch(`${API_BASE}/invoices/${encodeURIComponent(id)}`);
+        if (!res.ok) throw new Error(res.status === 404 ? 'Invoice not found' : `HTTP ${res.status}`);
+        const data = await res.json();
+        renderResults(data);
+        showPanel('results');
+      } catch (err) {
+        document.getElementById('error-message').textContent = err.message;
+        showPanel('error');
+      }
+    }
+
+    // ── Render results ────────────────────────────────────────────────────────
+    function fmt(n) {
+      return n != null ? `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+    }
+    function fmtAddr(addr) {
+      if (!addr) return '—';
+      return [addr.street, addr.city, addr.state, addr.zip_code].filter(Boolean).join(', ') || '—';
+    }
+
+    function renderResults(d) {
+      // Metadata
+      document.getElementById('meta-vendor').textContent       = d.vendor || '—';
+      document.getElementById('meta-invoice-id').textContent   = d.invoice_id || '—';
+      document.getElementById('meta-date').textContent         = d.date || '—';
+      document.getElementById('meta-due-date').textContent     = d.due_date || '—';
+      document.getElementById('meta-bill-to').textContent      = d.bill_to_name || '—';
+      document.getElementById('meta-customer-id').textContent  = d.customer_id || '—';
+      document.getElementById('meta-vendor-address').textContent = fmtAddr(d.vendor_address);
+
+      // Tax exempt badge
+      const exemptBadge = document.getElementById('badge-exempt');
+      if (d.tax_exempt) {
+        const reasons = { pre_taxed: 'Tax already applied', used_products: 'Used goods — tax exempt' };
+        document.getElementById('badge-exempt-text').textContent = reasons[d.tax_exempt_reason] || d.tax_exempt_reason || 'Tax Exempt';
+        exemptBadge.classList.remove('hidden');
+        exemptBadge.classList.add('flex');
+      } else {
+        exemptBadge.classList.add('hidden');
+      }
+
+      // Extraction method badge
+      const methodBadge = document.getElementById('badge-method');
+      if (d.extraction_method) {
+        methodBadge.textContent = d.extraction_method === 'vision' ? 'Vision (scanned)' : 'PDF';
+        methodBadge.classList.remove('hidden');
+      }
+
+      // Line items
+      const tbody = document.getElementById('line-items-body');
+      tbody.innerHTML = '';
+      (d.line_item_taxes || []).forEach((item, i) => {
+        const isEven = i % 2 === 0;
+        const zeroTax = item.tax_rate === 0;
+        tbody.innerHTML += `
+          <tr class="${isEven ? '' : 'bg-gray-50/50'} border-b border-gray-100 last:border-0 hover:bg-green-50/30 transition-colors">
+            <td class="px-5 py-3 text-gray-800 max-w-xs">
+              <span class="line-clamp-2">${item.description}</span>
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600 whitespace-nowrap">${item.quantity ?? '—'}</td>
+            <td class="px-4 py-3 text-right text-gray-600 whitespace-nowrap">${fmt(item.unit_price)}</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium whitespace-nowrap">${fmt(item.total_amount)}</td>
+            <td class="px-4 py-3 text-gray-600">
+              <span class="inline-block bg-gray-100 text-gray-700 text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap">${item.category}</span>
+            </td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">
+              <span class="${zeroTax ? 'text-brand' : 'text-gray-700'} font-medium">${item.tax_rate}%</span>
+            </td>
+            <td class="px-5 py-3 text-right font-medium whitespace-nowrap ${zeroTax ? 'text-brand' : 'text-gray-800'}">${fmt(item.tax_amount)}</td>
+          </tr>`;
+      });
+
+      // Totals
+      document.getElementById('total-subtotal').textContent = fmt(d.subtotal);
+      document.getElementById('total-tax').textContent      = fmt(d.total_tax);
+      document.getElementById('total-grand').textContent    = fmt(d.grand_total);
+    }
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+    function reset() {
+      clearFile();
+      document.getElementById('lookup-input').value = '';
+      document.getElementById('badge-method').classList.add('hidden');
+      document.getElementById('badge-exempt').classList.add('hidden');
+      showPanel('upload');
+    }
+
+    // Enter key on lookup
+    document.getElementById('lookup-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') lookupInvoice();
+    });
+  </script>
+</body>
+</html>
