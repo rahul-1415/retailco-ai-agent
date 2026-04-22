@@ -9,6 +9,9 @@ Parameters:
     Type: String
     Default: /retailco/openai-api-key
     Description: SSM Parameter Store path for the OpenAI API key (SecureString)
+  DeploymentBucket:
+    Type: String
+    Description: S3 bucket where lambda.zip is uploaded before deploying
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -90,9 +93,8 @@ Resources:
           INVOICES_BUCKET: !Ref InvoicesBucket
           SSM_PARAM_NAME: !Ref SsmParamName
       Code:
-        ZipFile: |
-          def handler(event, context):
-              return {"statusCode": 200, "body": "placeholder"}
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: lambda.zip
 
   # ── API Gateway ──────────────────────────────────────────────────────────
   InvoiceApi:

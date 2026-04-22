@@ -72,6 +72,10 @@ packaged.yaml
 *.swp
 *.swo
 
+# Lambda build artifacts
+.build/
+lambda.zip
+
 # Next.js
 frontend/.next/
 frontend/node_modules/
