@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.models.invoice import Address
+
 
 @dataclass
 class LineItemTax:
@@ -11,6 +13,18 @@ class LineItemTax:
     tax_amount: float
     quantity: Optional[float] = None
     unit_price: Optional[float] = None
+
+
+def _address_dict(addr: Optional[Address]) -> Optional[dict]:
+    if addr is None:
+        return None
+    return {
+        "street": addr.street,
+        "city": addr.city,
+        "state": addr.state,
+        "zip_code": addr.zip_code,
+        "phone": addr.phone,
+    }
 
 
 @dataclass
@@ -25,12 +39,23 @@ class TaxResult:
     tax_exempt: bool = False
     tax_exempt_reason: Optional[str] = None
     extraction_method: str = "pdf"
+    # Optional metadata
+    vendor_address: Optional[Address] = None
+    bill_to_name: Optional[str] = None
+    bill_to_address: Optional[Address] = None
+    customer_id: Optional[str] = None
+    due_date: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
             "invoice_id": self.invoice_id,
             "vendor": self.vendor,
+            "vendor_address": _address_dict(self.vendor_address),
+            "bill_to_name": self.bill_to_name,
+            "bill_to_address": _address_dict(self.bill_to_address),
+            "customer_id": self.customer_id,
             "date": self.date,
+            "due_date": self.due_date,
             "line_item_taxes": [
                 {
                     "description": t.description,

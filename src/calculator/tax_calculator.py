@@ -28,7 +28,12 @@ class TaxCalculator:
         return TaxResult(
             invoice_id=invoice.invoice_id,
             vendor=invoice.vendor,
+            vendor_address=invoice.vendor_address,
+            bill_to_name=invoice.bill_to_name,
+            bill_to_address=invoice.bill_to_address,
+            customer_id=invoice.customer_id,
             date=invoice.date,
+            due_date=invoice.due_date,
             line_item_taxes=line_item_taxes,
             subtotal=subtotal,
             total_tax=total_tax,

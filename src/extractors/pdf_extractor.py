@@ -4,7 +4,7 @@ import fitz
 from openai import OpenAI
 
 from src.extractors.base import BaseExtractor
-from src.models import Invoice, LineItem
+from src.models import Invoice, LineItem, Address
 
 EXTRACTION_PROMPT = """You are extracting structured data from an invoice.
 
@@ -12,7 +12,24 @@ Return ONLY valid JSON with this exact structure:
 {
   "invoice_id": "<invoice number or generated uuid if not found>",
   "vendor": "<vendor/company name>",
+  "vendor_address": {
+    "street": "<street or null>",
+    "city": "<city or null>",
+    "state": "<state or null>",
+    "zip_code": "<zip or null>",
+    "phone": "<phone or null>"
+  },
+  "bill_to_name": "<bill-to name or null>",
+  "bill_to_address": {
+    "street": "<street or null>",
+    "city": "<city or null>",
+    "state": "<state or null>",
+    "zip_code": "<zip or null>",
+    "phone": "<phone or null>"
+  },
+  "customer_id": "<customer ID or null>",
   "date": "<invoice date as string>",
+  "due_date": "<due date as string or null>",
   "tax_exempt": <true or false>,
   "tax_exempt_reason": "<'pre_taxed' | 'used_products' | exact notice text | null>",
   "line_items": [
@@ -36,6 +53,7 @@ Rules:
 - quantity and unit_price: parse from description string if not in separate columns
   (e.g. "Item Name - QTY: 50 $799.50" → quantity=50). Return null if cannot determine.
 - total_amount: always required. Strip $, commas, spaces before parsing as float.
+- For address fields return null for any sub-field not present in the invoice.
 - Do not include any text outside the JSON object.
 
 Invoice text:
@@ -81,8 +99,24 @@ class PDFExtractor(BaseExtractor):
         return Invoice(
             invoice_id=data.get("invoice_id") or str(uuid.uuid4()),
             vendor=data.get("vendor", "Unknown"),
+            vendor_address=self._to_address(data.get("vendor_address")),
+            bill_to_name=data.get("bill_to_name"),
+            bill_to_address=self._to_address(data.get("bill_to_address")),
+            customer_id=data.get("customer_id"),
             date=data.get("date", ""),
+            due_date=data.get("due_date"),
             line_items=line_items,
             tax_exempt=bool(data.get("tax_exempt", False)),
             tax_exempt_reason=data.get("tax_exempt_reason"),
+        )
+
+    def _to_address(self, raw: dict | None) -> Address | None:
+        if not raw:
+            return None
+        return Address(
+            street=raw.get("street"),
+            city=raw.get("city"),
+            state=raw.get("state"),
+            zip_code=raw.get("zip_code"),
+            phone=raw.get("phone"),
         )
