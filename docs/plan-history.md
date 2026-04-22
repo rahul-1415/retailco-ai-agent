@@ -265,3 +265,28 @@ Initial frontend was a single `frontend/index.html` using Tailwind CDN + vanilla
 - `lib/api.ts` — `processInvoice()` and `lookupInvoice()` fetch wrappers
 - `lib/format.ts` — shared `fmt()`, `fmtAddress()`, `TAX_EXEMPT_LABELS`
 - API base URL via `NEXT_PUBLIC_API_BASE_URL` env var; defaults to SAM local port
+
+---
+
+## v10 — Invoice History on Home Screen (2026-04-22)
+
+### What prompted this
+After processing an invoice the user had to remember the invoice ID to look it up again. There was no way to see previously processed invoices without knowing the ID upfront.
+
+### What changed
+
+**Backend — new `GET /invoices` endpoint:**
+- `lambda_handler.py`: `_handle_list()` does a DynamoDB `scan` with `ProjectionExpression` returning only summary fields (`invoice_id`, `vendor`, `date`, `grand_total`, `tax_exempt`, `tax_exempt_reason`) — keeps response payload small
+- Results sorted by date descending before returning
+- `scripts/local_server.py`: same endpoint returns summaries from in-memory `_store`
+
+**Infrastructure — new API Gateway method:**
+- `ListMethod` (`GET /invoices`) added to `InvoicesResource` — separate from the existing `PostMethod` on the same path
+- `ApiDeployment` `DependsOn` updated to include `ListMethod`
+- IAM role already had `dynamodb:Scan` — no policy change needed
+
+**Frontend:**
+- `lib/types.ts`: `InvoiceSummary` interface (subset of `TaxResult` — summary fields only)
+- `lib/api.ts`: `listInvoices()` fetch wrapper
+- `components/HistoryPanel.tsx`: new component — renders a list of invoice rows with vendor, ID, date, grand total, and tax exempt badge; each row is clickable and loads the full result
+- `app/page.tsx`: fetches history on mount and after each successful process; renders `HistoryPanel` below `UploadPanel` on the upload view; hidden when list is empty

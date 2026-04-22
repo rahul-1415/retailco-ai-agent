@@ -49,6 +49,7 @@ RetailCo receives invoices from hundreds of vendors in varying formats (native P
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/invoices` | Upload PDF (multipart/form-data), returns full TaxResult JSON |
+| `GET` | `/invoices` | List all processed invoices (summary fields only, sorted by date desc) |
 | `GET` | `/invoices/{invoice_id}` | Retrieve a previously processed result from DynamoDB |
 
 ---
@@ -90,14 +91,15 @@ retailco-ai-agent/
 │   │   ├── UploadPanel.tsx     # Drag-drop + file card + process button
 │   │   ├── ProcessingPanel.tsx # Spinner + rotating step labels
 │   │   ├── ErrorPanel.tsx      # Error card + retry
+│   │   ├── HistoryPanel.tsx    # Recent invoices list on home screen
 │   │   └── results/
 │   │       ├── ResultsPanel.tsx    # Top bar, badges, composes sub-components
 │   │       ├── MetadataCards.tsx   # 8-cell metadata grid
 │   │       ├── LineItemsTable.tsx  # Line items with category pills
 │   │       └── TotalsCard.tsx      # Subtotal / tax / grand total
 │   ├── lib/
-│   │   ├── types.ts            # TaxResult, LineItemTax, Address interfaces
-│   │   ├── api.ts              # processInvoice(), lookupInvoice()
+│   │   ├── types.ts            # TaxResult, LineItemTax, Address, InvoiceSummary interfaces
+│   │   ├── api.ts              # processInvoice(), lookupInvoice(), listInvoices()
 │   │   └── format.ts           # fmt(), fmtAddress(), TAX_EXEMPT_LABELS
 │   ├── next.config.js
 │   ├── tailwind.config.ts
@@ -233,6 +235,7 @@ Resources:
 | `InvoicesResource` | `AWS::ApiGateway::Resource` | `/invoices` path |
 | `InvoiceIdResource` | `AWS::ApiGateway::Resource` | `/invoices/{invoice_id}` path |
 | `PostMethod` | `AWS::ApiGateway::Method` | `POST /invoices` → Lambda proxy |
+| `ListMethod` | `AWS::ApiGateway::Method` | `GET /invoices` → Lambda proxy |
 | `GetMethod` | `AWS::ApiGateway::Method` | `GET /invoices/{invoice_id}` → Lambda proxy |
 | `ApiDeployment` | `AWS::ApiGateway::Deployment` | Deploys to `prod` stage |
 | `LambdaApiPermission` | `AWS::Lambda::Permission` | Allow API Gateway to invoke Lambda |
@@ -247,8 +250,10 @@ No `OpenAIApiKey` CloudFormation parameter — key lives in SSM, never touches C
 - **Run:** `cd frontend && npm install && npm run dev` → `http://localhost:3000`
 - **API URL:** set `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
 - Views: Upload → Processing → Results (or Error)
+- Home screen: `UploadPanel` + `HistoryPanel` (recent invoices list, fetched from `GET /invoices` on mount and after each process)
 - Results display: metadata cards, line items table with category pills, totals card
 - Badges: extraction method (`PDF` / `Vision (scanned)`), tax exempt reason
+- `HistoryPanel`: clickable rows showing vendor, invoice ID, date, grand total, and exempt badge; clicking loads full result via `GET /invoices/{id}`
 
 ### 10. Requirements
 ```

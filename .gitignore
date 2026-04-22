@@ -16,7 +16,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -72,6 +71,12 @@ packaged.yaml
 .idea/
 *.swp
 *.swo
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/next-env.d.ts
+frontend/package-lock.json
 
 # macOS
 .DS_Store

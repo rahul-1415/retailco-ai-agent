@@ -74,6 +74,24 @@ def _handle_post(event: dict) -> dict:
         return _response(500, {"error": str(e)})
 
 
+def _decimal_to_python(o):
+    if isinstance(o, Decimal):
+        return float(o)
+    return str(o)
+
+
+def _handle_list() -> dict:
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    response = table.scan(
+        ProjectionExpression="invoice_id, vendor, #d, grand_total, tax_exempt, tax_exempt_reason",
+        ExpressionAttributeNames={"#d": "date"},
+    )
+    items = json.loads(json.dumps(response.get("Items", []), default=_decimal_to_python))
+    items.sort(key=lambda x: x.get("date", ""), reverse=True)
+    return _response(200, items)
+
+
 def _handle_get(event: dict) -> dict:
     invoice_id = event.get("pathParameters", {}).get("invoice_id")
     if not invoice_id:
@@ -87,8 +105,7 @@ def _handle_get(event: dict) -> dict:
     if not item:
         return _response(404, {"error": f"Invoice {invoice_id} not found"})
 
-    # Convert Decimal back to float for JSON serialisation
-    item = json.loads(json.dumps(item, default=lambda o: float(o) if isinstance(o, Decimal) else str(o)))
+    item = json.loads(json.dumps(item, default=_decimal_to_python))
     return _response(200, item)
 
 
@@ -98,6 +115,8 @@ def handler(event: dict, context) -> dict:
 
     if method == "POST" and resource == "/invoices":
         return _handle_post(event)
+    if method == "GET" and resource == "/invoices":
+        return _handle_list()
     if method == "GET" and resource == "/invoices/{invoice_id}":
         return _handle_get(event)
 

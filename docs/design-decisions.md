@@ -125,3 +125,11 @@ A record of every significant technical and product decision made during the des
 ### API URL via environment variable
 **Decision:** `NEXT_PUBLIC_API_BASE_URL` in `.env.local` controls the backend endpoint.
 **Why:** Same frontend code works against SAM local (`http://127.0.0.1:3000`), a dev stack, and the production API Gateway URL — no code changes, just env var swap.
+
+### Invoice history via `GET /invoices` scan, not a separate index
+**Decision:** `GET /invoices` runs a DynamoDB `Scan` with `ProjectionExpression` for summary fields. No secondary index, no separate history table.
+**Why:** At AP-team scale (dozens to low hundreds of invoices) a scan is instant and free. A GSI or a separate history table would add CloudFormation resources and write overhead for no measurable gain. If the table ever grows to thousands of records, a GSI on `date` can be added then.
+
+### History panel returns summary fields only
+**Decision:** `GET /invoices` returns `invoice_id`, `vendor`, `date`, `grand_total`, `tax_exempt`, `tax_exempt_reason` — not the full `TaxResult`.
+**Why:** The full result (including all line items) can be hundreds of bytes per record. The history list only needs enough to render a row and identify the record. Full detail is fetched on demand when the user clicks a row (`GET /invoices/{id}`).
