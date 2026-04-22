@@ -140,3 +140,39 @@ Without monitoring, a failed invocation (OpenAI timeout, malformed PDF, DynamoDB
 | X-Ray | Useful for tracing but not essential for requirements |
 | Secrets Manager | $0.40/secret/month; SSM does the same job for free |
 | API Gateway Usage Plan | Adds rate limiting but no requirement calls for it |
+
+---
+
+## v5 — Invoice Reality Check: Pre-Taxed Detection + Optional Fields (2026-04-22)
+
+### What prompted this
+Actual invoice files were reviewed before building. Four issues were found that the plan didn't account for.
+
+### Finding 1: Pre-taxed invoice (Delta-Distribution, R-1093-12322)
+The invoice comments section reads: *"Do not tax, tax has already been applied to items in invoice."* Without handling this, the agent would silently double-tax the invoice — a correctness bug, not a cosmetic one. Other real-world variants of the same notice also exist (e.g. *"Items are non-taxable due to 'Used' status"*).
+
+**Change:** Agent system prompt now includes an explicit pre-taxed detection rule. The agent scans the entire invoice — including comments, footers, and notes — before classifying any line items. If a pre-tax notice is found, `Invoice.pre_taxed` is set to `True`, the classification loop is skipped entirely, and all line items get `tax_rate=0`. This short-circuit also saves unnecessary GPT-4o calls.
+
+**Model change:** `Invoice` gains a `pre_taxed: bool` field. `TaxResult` gains `pre_taxed: bool` and `extraction_method: str` for auditability.
+
+### Finding 2: Quantity and price embedded in description (Delta-Distribution)
+Delta-Distribution uses only two columns (Description | Price) and embeds quantity and product ID inside the description string: `"BrightWave Laundry Pods – 42 Count – ID: 68840 - QTY: 50 $799.50"`. The original `LineItem` model assumed `quantity` and `unit_price` were always separate fields.
+
+**Change:** `quantity: Optional[float]` and `unit_price: Optional[float]` in `LineItem` — both nullable. The GPT-4o extraction prompt now explicitly instructs the model to parse these fields out of the description string when column-based values are absent, and return `null` when they genuinely cannot be determined.
+
+### Finding 3: Scanned invoice confirmed (Invoice_Scan.pdf)
+The scan is a genuine image-based PDF with handwritten-style font and OCR noise (`"aO"` for `30`, `"f"` for `$`). PyMuPDF will produce no usable text. This confirms the Vision fallback is essential, not optional.
+
+**Change:** Fallback threshold made explicit — trigger `VisionExtractor` when extracted text is fewer than 50 meaningful characters.
+
+### Finding 4: Inconsistent $ formatting
+Several invoices (AlphaImportInvoice, 1.pdf) drop the `$` prefix on the last few amount rows. No model change needed — GPT-4o handles this in context — but the extraction prompt was updated to explicitly instruct amount parsing as float after stripping non-numeric characters.
+
+### Summary of model changes
+| Field | Before | After |
+|---|---|---|
+| `LineItem.quantity` | `int` (required) | `Optional[float]` |
+| `LineItem.unit_price` | `float` (required) | `Optional[float]` |
+| `Invoice.pre_taxed` | not present | `bool` (required) |
+| `TaxResult.pre_taxed` | not present | `bool` (required) |
+| `TaxResult.extraction_method` | not present | `str` (`"pdf"` or `"vision"`) |
