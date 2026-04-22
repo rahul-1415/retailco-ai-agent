@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RetailCo Invoice Tax Agent — API Gateway, Lambda, DynamoDB, S3, SSM, CloudWatch
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  SsmParamName:
+    Type: String
+    Default: /retailco/openai-api-key
+    Description: SSM Parameter Store path for the OpenAI API key (SecureString)
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # ── S3: raw invoice storage ──────────────────────────────────────────────
+  InvoicesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "retailco-invoices-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldInvoices
+            Status: Enabled
+            ExpirationInDays: 365
+
+  # ── DynamoDB: tax results ────────────────────────────────────────────────
+  TaxResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: retailco-tax-results
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: invoice_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: invoice_id
+          KeyType: HASH
+
+  # ── IAM: Lambda execution role ───────────────────────────────────────────
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: retailco-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RetailCoLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::retailco-invoices-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                Resource: !GetAtt TaxResultsTable.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmParamName}"
+
+  # ── Lambda: invoice processor ────────────────────────────────────────────
+  InvoiceProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: retailco-invoice-processor
+      Runtime: python3.12
+      Handler: lambda_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 29
+      MemorySize: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref TaxResultsTable
+          INVOICES_BUCKET: !Ref InvoicesBucket
+          SSM_PARAM_NAME: !Ref SsmParamName
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {"statusCode": 200, "body": "placeholder"}
+
+  # ── API Gateway ──────────────────────────────────────────────────────────
+  InvoiceApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: retailco-invoice-api
+      Description: RetailCo Invoice Tax Agent API
+      BinaryMediaTypes:
+        - multipart/form-data
+        - application/pdf
+
+  InvoicesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ParentId: !GetAtt InvoiceApi.RootResourceId
+      PathPart: invoices
+
+  InvoiceIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ParentId: !Ref InvoicesResource
+      PathPart: "{invoice_id}"
+
+  PostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ResourceId: !Ref InvoicesResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt InvoiceProcessorFunction.Arn
+
+  GetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ResourceId: !Ref InvoiceIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt InvoiceProcessorFunction.Arn
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostMethod
+      - GetMethod
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      StageName: prod
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt InvoiceProcessorFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${InvoiceApi}/*"
+
+  # ── CloudWatch: error monitoring ─────────────────────────────────────────
+  ErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${InvoiceProcessorFunction}"
+      FilterPattern: ERROR
+      MetricTransformations:
+        - MetricName: InvoiceProcessingErrors
+          MetricNamespace: RetailCo/InvoiceAgent
+          MetricValue: "1"
+          DefaultValue: 0
+
+  ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: retailco-invoice-processing-errors
+      AlarmDescription: Fires when the invoice processor logs an ERROR
+      Namespace: RetailCo/InvoiceAgent
+      MetricName: InvoiceProcessingErrors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: retailco-invoice-agent-alarms
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  ApiUrl:
+    Description: Base URL for the Invoice Tax Agent API
+    Value: !Sub "https://${InvoiceApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  InvoicesBucketName:
+    Description: S3 bucket for raw invoice storage
+    Value: !Ref InvoicesBucket
+
+  DynamoTableName:
+    Description: DynamoDB table for tax results
+    Value: !Ref TaxResultsTable
+
+  AlarmTopicArn:
+    Description: SNS topic ARN for error alarms — subscribe an email here
+    Value: !Ref AlarmTopic
