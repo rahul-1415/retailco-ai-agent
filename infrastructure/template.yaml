@@ -181,8 +181,15 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${InvoiceApi}/*"
 
   # ── CloudWatch: error monitoring ─────────────────────────────────────────
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${InvoiceProcessorFunction}"
+      RetentionInDays: 30
+
   ErrorMetricFilter:
     Type: AWS::Logs::MetricFilter
+    DependsOn: LambdaLogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${InvoiceProcessorFunction}"
       FilterPattern: ERROR
