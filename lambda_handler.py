@@ -31,12 +31,24 @@ def _get_agent() -> InvoiceAgent:
     return _agent
 
 
+_CORS_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
+
 def _response(status: int, body: dict) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _CORS_HEADERS,
         "body": json.dumps(body, default=str),
     }
+
+
+def _cors_preflight() -> dict:
+    return {"statusCode": 204, "headers": _CORS_HEADERS, "body": ""}
 
 
 def _parse_pdf_from_multipart(event: dict) -> bytes:
@@ -113,6 +125,8 @@ def handler(event: dict, context) -> dict:
     method = event.get("httpMethod", "")
     resource = event.get("resource", "")
 
+    if method == "OPTIONS":
+        return _cors_preflight()
     if method == "POST" and resource == "/invoices":
         return _handle_post(event)
     if method == "GET" and resource == "/invoices":

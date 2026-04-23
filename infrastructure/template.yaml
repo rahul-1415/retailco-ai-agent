@@ -162,12 +162,42 @@ Resources:
           - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
           - LambdaArn: !GetAtt InvoiceProcessorFunction.Arn
 
+  OptionsInvoices:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ResourceId: !Ref InvoicesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt InvoiceProcessorFunction.Arn
+
+  OptionsInvoiceId:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InvoiceApi
+      ResourceId: !Ref InvoiceIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt InvoiceProcessorFunction.Arn
+
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - PostMethod
       - ListMethod
       - GetMethod
+      - OptionsInvoices
+      - OptionsInvoiceId
     Properties:
       RestApiId: !Ref InvoiceApi
       StageName: prod
