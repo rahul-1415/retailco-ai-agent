@@ -1,0 +1,114 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'lambda_handler.py'
+      - 'tax_rate_by_category.csv'
+      - 'requirements.txt'
+      - 'infrastructure/template.yaml'
+  workflow_dispatch:
+
+jobs:
+  # ── Job 1: Build Lambda zip and validate template ──────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (manylinux wheels for Lambda)
+        run: |
+          pip install -r requirements.txt -t .build/ \
+            --platform manylinux2014_x86_64 \
+            --python-version 3.12 \
+            --only-binary=:all: \
+            --upgrade \
+            --quiet
+
+      - name: Copy source code
+        run: |
+          cp lambda_handler.py .build/
+          cp tax_rate_by_category.csv .build/
+          cp -r src .build/src
+
+      - name: Create Lambda zip
+        run: |
+          cd .build
+          zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" > /dev/null
+          cd ..
+          echo "Zip size: $(du -sh lambda.zip | cut -f1)"
+
+      - name: Validate CloudFormation template
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Validate template
+        run: aws cloudformation validate-template --template-body file://infrastructure/template.yaml
+
+      - name: Upload Lambda zip to S3
+        run: |
+          aws s3 cp lambda.zip s3://retailco-cfn-${{ secrets.AWS_ACCOUNT_ID }}/lambda.zip
+
+      - name: Save build artifact reference
+        run: echo "lambda.zip uploaded to s3://retailco-cfn-${{ secrets.AWS_ACCOUNT_ID }}/lambda.zip"
+
+  # ── Job 2: Deploy to AWS (requires manual approval) ───────────────────────
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production        # ← pauses here for manual approval in GitHub
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/template.yaml \
+            --stack-name retailco-agent \
+            --region us-east-1 \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+                DeploymentBucket=retailco-cfn-${{ secrets.AWS_ACCOUNT_ID }} \
+                SsmParamName=/retailco/openai-api-key \
+            --no-fail-on-empty-changeset
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name retailco-invoice-processor \
+            --s3-bucket retailco-cfn-${{ secrets.AWS_ACCOUNT_ID }} \
+            --s3-key lambda.zip \
+            --region us-east-1 \
+            --output table \
+            --query "{FunctionName:FunctionName,CodeSize:CodeSize,LastModified:LastModified}"
+
+      - name: Print API URL
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name retailco-agent \
+            --region us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text
