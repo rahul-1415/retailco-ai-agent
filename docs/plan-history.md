@@ -314,3 +314,54 @@ A single script that handles the full build and deploy cycle:
 6. Prints stack outputs table (ApiUrl, bucket, table, SNS ARN)
 
 **`.gitignore`:** Added `.build/` and `lambda.zip` to prevent build artifacts from being committed.
+
+---
+
+## v12 — CloudFormation LambdaLogGroup Fix (2026-04-23)
+
+### What prompted this
+First real CloudFormation deploy failed: `ErrorMetricFilter` CREATE_FAILED with "The specified log group does not exist." Lambda log groups are created automatically on first invocation, not at stack creation time — so the metric filter had nothing to attach to.
+
+### What changed
+- `infrastructure/template.yaml`: Added explicit `LambdaLogGroup` resource (`AWS::Logs::LogGroup`) with `RetentionInDays: 30`
+- `ErrorMetricFilter` now has `DependsOn: LambdaLogGroup` — guarantees creation order
+- Stack was in `ROLLBACK_COMPLETE` state (not updatable), so it was deleted and redeployed
+
+---
+
+## v13 — CORS Headers + Lambda Platform Fix (2026-04-23)
+
+### What prompted this
+After deploying, the Vercel frontend received CORS errors and 502 responses. The 502 was the root cause — Lambda was crashing on import with `No module named 'pydantic_core._pydantic_core'`. CORS errors were a symptom: API Gateway returns its own 502 without the Lambda's CORS headers.
+
+### Issue 1: Platform mismatch
+`pip install` on macOS downloads macOS `.dylib` wheels. Lambda runs on Amazon Linux (`x86_64`). Native extensions like `pydantic_core` (a dependency of `openai`) won't load on the wrong platform.
+
+**Fix:** Updated `deploy.sh` to pass `--platform manylinux2014_x86_64 --only-binary=:all:` to pip, forcing Linux-compatible wheels regardless of the build machine's OS.
+
+### Issue 2: CloudFormation skipping Lambda code updates
+When only the zip contents change (not the template), CloudFormation reports "No changes to deploy" and does not re-deploy the Lambda. The old broken code stays live.
+
+**Fix:** Added `aws lambda update-function-code` step at the end of `deploy.sh` to always force Lambda to pull the latest zip from S3.
+
+### Issue 3: No CORS headers
+Browser requests from Vercel were blocked because `lambda_handler.py` returned only `Content-Type`. A deployed frontend on a different domain requires `Access-Control-Allow-Origin`.
+
+**Fix:**
+- `lambda_handler.py`: Added `_CORS_HEADERS` dict with `Access-Control-Allow-Origin: *`, applied to all responses. Added `_cors_preflight()` handler for OPTIONS requests.
+- `infrastructure/template.yaml`: Added `OptionsInvoices` and `OptionsInvoiceId` API Gateway methods so OPTIONS preflight requests reach Lambda rather than being rejected by API Gateway.
+
+---
+
+## v14 — GitHub Actions CI/CD with Manual Approval Gate (2026-04-23)
+
+### What prompted this
+Deployments were manual (`./scripts/deploy.sh` from a local terminal). No automation, no audit trail, no approval gate.
+
+### What changed
+- `.github/workflows/deploy.yml`: Two-job pipeline
+  - **build** job: runs automatically on push to `main` (path-filtered to Lambda-affecting files only) — installs manylinux wheels, zips Lambda, validates CloudFormation template, uploads zip to S3
+  - **deploy** job: blocked by `environment: production` — GitHub pauses and sends an approval request before running `cloudformation deploy` and `lambda update-function-code`
+- Path filter: workflow only triggers when `src/`, `lambda_handler.py`, `requirements.txt`, or `infrastructure/template.yaml` change — frontend-only pushes don't start it
+- Secrets required: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID` in GitHub repository secrets
+- Environment required: `production` environment with required reviewers in GitHub Settings

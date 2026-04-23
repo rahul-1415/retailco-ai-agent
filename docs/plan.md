@@ -108,6 +108,9 @@ retailco-ai-agent/
 │   ├── plan.md                 # This file — current implementation plan
 │   ├── plan-history.md         # Chronological record of all planning changes
 │   └── design-decisions.md     # All technical and product design decisions
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          # CI/CD: build on push, manual approval gate before AWS deploy
 ├── scripts/
 │   ├── deploy.sh               # Build Lambda zip, upload to S3, deploy CloudFormation
 │   ├── local_server.py         # Local HTTP server (no AWS) for frontend dev
@@ -239,8 +242,11 @@ Resources:
 | `PostMethod` | `AWS::ApiGateway::Method` | `POST /invoices` → Lambda proxy |
 | `ListMethod` | `AWS::ApiGateway::Method` | `GET /invoices` → Lambda proxy |
 | `GetMethod` | `AWS::ApiGateway::Method` | `GET /invoices/{invoice_id}` → Lambda proxy |
+| `OptionsInvoices` | `AWS::ApiGateway::Method` | `OPTIONS /invoices` → Lambda proxy (CORS preflight) |
+| `OptionsInvoiceId` | `AWS::ApiGateway::Method` | `OPTIONS /invoices/{invoice_id}` → Lambda proxy (CORS preflight) |
 | `ApiDeployment` | `AWS::ApiGateway::Deployment` | Deploys to `prod` stage |
 | `LambdaApiPermission` | `AWS::Lambda::Permission` | Allow API Gateway to invoke Lambda |
+| `LambdaLogGroup` | `AWS::Logs::LogGroup` | Explicitly creates Lambda log group (30-day retention); required so `ErrorMetricFilter` has a group to attach to at deploy time |
 | `ErrorMetricFilter` | `AWS::Logs::MetricFilter` | Scans Lambda logs for `ERROR`, emits `InvoiceProcessingErrors` metric |
 | `ErrorAlarm` | `AWS::CloudWatch::Alarm` | Triggers when `InvoiceProcessingErrors >= 1` in 5 min window |
 | `AlarmTopic` | `AWS::SNS::Topic` | Receives alarm notifications; add email subscription post-deploy |
@@ -274,11 +280,12 @@ Every deploy (initial + updates):
 
 The script:
 1. Creates (or verifies) the S3 packaging bucket `retailco-cfn-<account-id>` with all public access blocked
-2. `pip install -r requirements.txt -t .build/` — installs Lambda dependencies
+2. `pip install --platform manylinux2014_x86_64 --only-binary=:all:` — installs Linux-compatible wheels for Lambda
 3. Copies `lambda_handler.py`, `src/`, `tax_rate_by_category.csv` into `.build/`
 4. Zips `.build/` → `lambda.zip` and uploads to the packaging bucket
 5. Runs `aws cloudformation deploy` — creates the stack on first run, produces a changeset on updates
-6. Prints stack outputs (ApiUrl, bucket name, table name, SNS alarm topic ARN)
+6. Runs `aws lambda update-function-code` to force Lambda to pull the new zip (CloudFormation skips this when only zip contents change)
+7. Prints stack outputs (ApiUrl, bucket name, table name, SNS alarm topic ARN)
 
 After deploy — wire the frontend:
 ```bash
@@ -290,7 +297,34 @@ Post-deploy — subscribe to error alerts:
 aws sns subscribe --topic-arn <AlarmTopicArn> --protocol email --notification-endpoint your@email.com
 ```
 
-### 11. Requirements
+### 11. CI/CD (`.github/workflows/deploy.yml`)
+Triggered on push to `main` (only when Lambda-affecting files change) or manually via `workflow_dispatch`.
+
+**Flow:**
+```
+push to main
+    │
+    ▼
+[build job] — auto
+  • pip install manylinux wheels
+  • zip lambda, upload to S3
+  • validate CloudFormation template
+    │
+    ▼
+⏸ Manual approval (GitHub Environment: production)
+    │
+    ▼
+[deploy job]
+  • aws cloudformation deploy
+  • aws lambda update-function-code
+  • prints live API URL
+```
+
+**GitHub setup required:**
+- Repository secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`
+- Environment named `production` with required reviewers enabled (Settings → Environments)
+
+### 12. Requirements
 ```
 # requirements.txt (deployed to Lambda)
 openai>=1.0.0

@@ -46,6 +46,26 @@ A record of every significant technical and product decision made during the des
 **Decision:** A plain bash script using `aws cloudformation deploy` directly.
 **Why:** SAM and CDK add toolchain dependencies (Docker for SAM local, Node for CDK) that aren't needed here. The project is a single Lambda with a known structure — a 60-line bash script is fully transparent, requires only the AWS CLI, and is easier to audit and modify than a framework abstraction.
 
+### `--platform manylinux2014_x86_64` for pip installs
+**Decision:** All `pip install` calls targeting Lambda use `--platform manylinux2014_x86_64 --only-binary=:all:`.
+**Why:** Packages like `pydantic_core` (a dependency of `openai`) ship platform-specific compiled extensions. Running `pip install` on macOS downloads macOS `.dylib` files which cannot load on Lambda's Amazon Linux environment, causing `ImportModuleError` at cold start. The `manylinux` wheels are built for Linux glibc compatibility and work on Lambda.
+
+### Explicit `aws lambda update-function-code` after every deploy
+**Decision:** `deploy.sh` always runs `aws lambda update-function-code` after CloudFormation deploy.
+**Why:** CloudFormation only redeploys the Lambda if the template changes. When only the zip contents change (new code, updated dependencies), CloudFormation reports "No changes to deploy" and the old Lambda code stays live. The explicit update-function-code call forces Lambda to pull the latest zip from S3 regardless.
+
+### Explicit `LambdaLogGroup` CloudFormation resource
+**Decision:** Lambda log group created as an explicit `AWS::Logs::LogGroup` resource with `RetentionInDays: 30`, rather than relying on auto-creation.
+**Why:** Lambda log groups are created automatically on first invocation, not at stack creation time. The `ErrorMetricFilter` resource needs the group to exist at deploy time — without the explicit resource it fails with "log group does not exist". Explicit creation also enforces a 30-day retention policy; auto-created groups have no retention limit and accumulate indefinitely.
+
+### CORS headers on all Lambda responses + OPTIONS methods in API Gateway
+**Decision:** `lambda_handler.py` returns `Access-Control-Allow-Origin: *` on every response, plus a dedicated `_cors_preflight()` handler for OPTIONS. API Gateway has explicit OPTIONS methods on both resources.
+**Why:** The frontend is hosted on a different domain (Vercel). Without CORS headers, browsers block all cross-origin requests. When Lambda returns a 502, API Gateway substitutes its own error response which has no CORS headers — so even the error is blocked by the browser, masking the real failure. Handling OPTIONS in Lambda (rather than API Gateway mock) keeps all CORS logic in one place.
+
+### GitHub Actions CI/CD with `environment: production` approval gate
+**Decision:** Two-job pipeline — `build` runs automatically on push, `deploy` is gated behind a GitHub Environment with required reviewers.
+**Why:** Automatic deploys to production on every push are risky — a bad commit would go live immediately. The `environment: production` gate pauses the pipeline and sends an approval notification, giving a human a chance to review the build before it touches AWS. The build job still runs automatically so the artifact is ready and waiting; the approval only adds a human step before the actual `cloudformation deploy`.
+
 ---
 
 ## Extraction & AI
