@@ -37,10 +37,14 @@ aws s3api put-public-access-block \
 # ---------------------------------------------------------------------------
 # 2. Install dependencies into build directory
 # ---------------------------------------------------------------------------
-echo "[2/5] Installing dependencies..."
+echo "[2/5] Installing dependencies (linux/x86_64 wheels for Lambda)..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
-pip install -r requirements.txt -t "$BUILD_DIR" --quiet
+pip install -r requirements.txt -t "$BUILD_DIR" --quiet \
+  --platform manylinux2014_x86_64 \
+  --python-version 3.12 \
+  --only-binary=:all: \
+  --upgrade
 
 # ---------------------------------------------------------------------------
 # 3. Copy source code into build directory
@@ -73,6 +77,18 @@ aws cloudformation deploy \
       DeploymentBucket="$CFN_BUCKET" \
       SsmParamName="/retailco/openai-api-key" \
   --no-fail-on-empty-changeset
+
+# ---------------------------------------------------------------------------
+# Force Lambda to pull the new zip (CloudFormation skips if template unchanged)
+# ---------------------------------------------------------------------------
+echo "[+] Updating Lambda function code..."
+aws lambda update-function-code \
+  --function-name retailco-invoice-processor \
+  --s3-bucket "$CFN_BUCKET" \
+  --s3-key lambda.zip \
+  --region "$REGION" \
+  --output table \
+  --query "{FunctionName:FunctionName,CodeSize:CodeSize,LastModified:LastModified}"
 
 # ---------------------------------------------------------------------------
 # Print outputs
